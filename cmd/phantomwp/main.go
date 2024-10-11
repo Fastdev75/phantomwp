@@ -8,24 +8,30 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"sync"
+	"time"
 )
 
 const (
 	colorReset  = "\033[0m"
 	colorGreen  = "\033[32m"
 	colorYellow = "\033[33m"
+	colorRed    = "\033[31m"
+)
+
+var (
+	urlFlag     = flag.String("l", "", "URL of the website to check")
+	fileFlag    = flag.String("f", "", "File containing URLs to check")
+	outputFlag  = flag.String("o", "", "Output file for WordPress detections")
+	timeoutFlag = flag.Int("t", 10, "Timeout for HTTP requests in seconds")
 )
 
 func main() {
-	urlFlag := flag.String("l", "", "URL of the website to check")
-	fileFlag := flag.String("f", "", "File containing URLs to check")
-	outputFlag := flag.String("o", "", "Output file for WordPress detections")
-	helpFlag := flag.Bool("help", false, "Show help information")
-
+	printASCIILogo()
 	flag.Parse()
 
-	if *helpFlag {
-		printHelp()
+	if *urlFlag == "" && *fileFlag == "" {
+		fmt.Println("Please provide either -l or -f flag. Use -help for more information.")
 		return
 	}
 
@@ -40,26 +46,28 @@ func main() {
 		output = file
 	}
 
+	start := time.Now()
+
 	if *urlFlag != "" {
 		checkSingleURL(*urlFlag, output)
 	} else if *fileFlag != "" {
 		checkURLsFromFile(*fileFlag, output)
-	} else {
-		fmt.Println("Please provide either -l or -f flag. Use -help for more information.")
 	}
+
+	duration := time.Since(start)
+	fmt.Printf("\n%sTask completed in %v%s\n", colorGreen, duration, colorReset)
 }
 
-func printHelp() {
-	fmt.Println("PhantomWP - WordPress Detection Tool")
-	fmt.Println("\nUsage:")
-	fmt.Println("  PhantomWP -l <url> [-o <output_file>]     Check a single URL")
-	fmt.Println("  PhantomWP -f <file> [-o <output_file>]    Check URLs from a file")
-	fmt.Println("  PhantomWP -help                           Show this help message")
-	fmt.Println("\nOptions:")
-	fmt.Println("  -l <url>          URL of the website to check")
-	fmt.Println("  -f <file>         Path to a file containing URLs (one per line)")
-	fmt.Println("  -o <output_file>  Output file for WordPress detections")
-	fmt.Println("  -help             Show this help message")
+func printASCIILogo() {
+	logo := `
+    ____  __                 __              _       _______ 
+   / __ \/ /_  ____ _____   / /_____  ____ _/ /  __ / / ___/ 
+  / /_/ / __ \/ __ '/ __ \ / __/ __ \/ __ '/ _ \| / /\__ \  
+ / ____/ / / / /_/ / / / // /_/ /_/ / /_/ / / / |/ /___/ /  
+/_/   /_/ /_/\__,_/_/ /_/ \__/\____/\__, /_/_//___//____/   
+                                   /____/                    
+`
+	fmt.Println(colorGreen + logo + colorReset)
 }
 
 func checkSingleURL(url string, output io.Writer) {
@@ -78,13 +86,30 @@ func checkURLsFromFile(filename string, output io.Writer) {
 	}
 	defer file.Close()
 
+	var wg sync.WaitGroup
+	urlChan := make(chan string)
+
+	// Start worker goroutines
+	for i := 0; i < 10; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for url := range urlChan {
+				checkSingleURL(url, output)
+			}
+		}()
+	}
+
 	scanner := bufio.NewScanner(file)
 	for scanner.Scan() {
 		url := strings.TrimSpace(scanner.Text())
 		if url != "" {
-			checkSingleURL(url, output)
+			urlChan <- url
 		}
 	}
+
+	close(urlChan)
+	wg.Wait()
 
 	if err := scanner.Err(); err != nil {
 		fmt.Printf("Error reading file: %v\n", err)
@@ -96,9 +121,13 @@ func detectWordPress(url string) bool {
 		url = "http://" + url
 	}
 
-	resp, err := http.Get(url)
+	client := &http.Client{
+		Timeout: time.Duration(*timeoutFlag) * time.Second,
+	}
+
+	resp, err := client.Get(url)
 	if err != nil {
-		fmt.Printf("Error fetching URL: %v\n", err)
+		fmt.Printf("%sError fetching URL%s: %v\n", colorRed, colorReset, err)
 		return false
 	}
 	defer resp.Body.Close()
@@ -118,9 +147,9 @@ func detectWordPress(url string) bool {
 	// Check for common WordPress paths
 	commonPaths := []string{"/wp-content/", "/wp-includes/", "/wp-admin/"}
 	for _, path := range commonPaths {
-		resp, err := http.Get(url + path)
+		resp, err := client.Get(url + path)
 		if err == nil {
-			defer resp.Body.Close()
+			resp.Body.Close()
 			if resp.StatusCode == 200 {
 				return true
 			}
