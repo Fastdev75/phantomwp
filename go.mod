@@ -1,3 +1,8 @@
-module github.com/Fastdev75/phantomwp
+﻿module github.com/Fastdev75/phantomwp
 
-go 1.23.2
+go 1.20
+
+require (
+golang.org/x/net v0.15.0
+golang.org/x/sync v0.3.0
+)

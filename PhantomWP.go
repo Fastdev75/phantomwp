@@ -1,6 +1,37 @@
 package main
 
 import (
+"bufio"
+"encoding/json"
+"flag"
+"fmt"
+"io"
+"net/http"
+"os"
+"os/exec"
+"runtime"
+"strings"
+"sync"
+"sync/atomic"
+"time"
+
+"golang.org/x/net/context"
+"golang.org/x/sync/semaphore"
+)
+
+func init() {
+// Vérifier et télécharger les dépendances
+cmd := exec.Command("go", "mod", "download")
+cmd.Stdout = os.Stdout
+cmd.Stderr = os.Stderr
+if err := cmd.Run(); err != nil {
+fmt.Printf("Error downloading dependencies: %v\n", err)
+os.Exit(1)
+}
+}
+
+
+import (
 	"bufio"
 	"flag"
 	"fmt"
